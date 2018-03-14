@@ -3,10 +3,11 @@ import serial
 import time
 from xml.dom import minidom
 from optparse import OptionParser
+import daemon
+import lockfile.pidlockfile
 import sys
-import daemon,daemon.pidlockfile
 
-def readCurrentCost(port,interval,outname,baudrate=57600):
+def readCurrentCost(port,interval,outname,channel,baudrate=57600):
 
     if outname==None:
         outfile = sys.stdout
@@ -28,18 +29,25 @@ def readCurrentCost(port,interval,outname,baudrate=57600):
     
     while True:
         line = ser.readline()
+        print line
         thisTime = time.time()
         if len(line)>0:
             xmldoc = minidom.parseString(line)
             # parse the xml
             try:
                 temperature_nodes = xmldoc.getElementsByTagName('tmpr')
-                watts_nodes = xmldoc.getElementsByTagName('ch1')[0].getElementsByTagName('watts')
+                if channel!=0:
+                    watts_nodes = xmldoc.getElementsByTagName('ch'+`channel`)[0].getElementsByTagName('watts')
+                else:
+                    watts_nodes = xmldoc.getElementsByTagName('ch1')[0].getElementsByTagName('watts')
+                    watts_nodes += xmldoc.getElementsByTagName('ch2')[0].getElementsByTagName('watts')
+                    watts_nodes += xmldoc.getElementsByTagName('ch3')[0].getElementsByTagName('watts')
             except:
                 continue
             # accumulate data
             temp  += float(temperature_nodes[0].childNodes[0].nodeValue)
-            power += float(watts_nodes[0].childNodes[0].nodeValue)
+            for node in watts_nodes:
+                power += float(node.childNodes[0].nodeValue)
             count += 1
             # check if we should write out data
             if thisTime-startTime >= interval:
@@ -59,15 +67,16 @@ if __name__ == "__main__":
     parser.add_option("-i", "--interval",metavar="INT",type="int",default=300,help="interval in seconds over which data should be averaged (default:300)")
     parser.add_option("-d", "--daemon",action="store_true",default=False,help="run in daemon mode")
     parser.add_option("-p", "--pid-file",metavar="FILE",help="store PID in FILE")
+    parser.add_option("-c", "--channel",metavar="INT",type="int",default=1,help="EnviR Channel, 0 for all combined")
     (options, args) = parser.parse_args()
-
     if options.daemon:
         if options.pid_file == None:
             parser.error('no pid file specified')
         if options.filename == None:
             parser.error('must specify output file')
             
-        ourlockfile = daemon.pidlockfile.PIDLockFile(options.pid_file)
+        #ourlockfile = lockfile.LockFile(options.pid_file)
+        ourlockfile = lockfile.pidlockfile.PIDLockFile(options.pid_file, timeout=1)
         context = daemon.DaemonContext(
             working_directory='/tmp',
             umask=18 ,
@@ -75,6 +84,6 @@ if __name__ == "__main__":
             )
 
         with context:
-            readCurrentCost(options.serial_device,options.interval,options.filename)
+            readCurrentCost(options.serial_device,options.interval,options.filename,options.channel)
     else:
-        readCurrentCost(options.serial_device,options.interval,options.filename)
+        readCurrentCost(options.serial_device,options.interval,options.filename,options.channel)
